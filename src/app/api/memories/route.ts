@@ -62,6 +62,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  await db.delete(memories).where(eq(memories.id, id));
+  // Bug #6 fix: Scope delete to userId for defense-in-depth
+  await db.delete(memories).where(and(eq(memories.id, id), eq(memories.userId, userId)));
   return NextResponse.json({ ok: true });
 }

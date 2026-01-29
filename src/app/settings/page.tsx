@@ -19,6 +19,7 @@ export default function SettingsPage() {
   const [credits, setCredits] = useState(0);
   const [plan, setPlan] = useState("free");
   const [newMemory, setNewMemory] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/login");
@@ -41,23 +42,34 @@ export default function SettingsPage() {
     if (status === "authenticated") load();
   }, [status, load]);
 
-  async function addMemory() {
+  async function handleAddMemory() {
     if (!newMemory.trim()) return;
-    await fetch("/api/memories", {
+    setError("");
+    const res = await fetch("/api/memories", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: newMemory, type: "general" }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ error: "Failed to add memory" }));
+      setError(data.error || "Failed to add memory");
+      return;
+    }
     setNewMemory("");
     load();
   }
 
   async function deleteMemory(id: string) {
-    await fetch("/api/memories", {
+    setError("");
+    const res = await fetch("/api/memories", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
+    if (!res.ok) {
+      setError("Failed to delete memory");
+      return;
+    }
     load();
   }
 
@@ -97,6 +109,11 @@ export default function SettingsPage() {
           Latix remembers things about you across conversations. Add or remove memories here.
         </p>
 
+        {error && (
+          <div className="p-3 mb-3 text-sm bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">
+            {error}
+          </div>
+        )}
         <div className="flex gap-2 mb-4">
           <input
             value={newMemory}
@@ -106,7 +123,7 @@ export default function SettingsPage() {
             className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-lg text-sm focus:outline-none focus:border-[var(--accent)]"
           />
           <button
-            onClick={addMemory}
+            onClick={handleAddMemory}
             className="px-4 py-2 bg-[var(--accent)] text-white text-sm rounded-lg hover:bg-[var(--accent-hover)]"
           >
             Add

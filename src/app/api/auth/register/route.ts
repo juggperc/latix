@@ -15,6 +15,12 @@ export async function POST(req: Request) {
       );
     }
 
+    // Bug #5 fix: Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
+    }
+
     const [exists] = await db.select().from(users).where(eq(users.email, email)).limit(1);
     if (exists) {
       return NextResponse.json({ error: "Email already registered" }, { status: 409 });

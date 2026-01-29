@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { users, conversations, messages as messagesTable } from "@/lib/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getModel, calculateCost, DEFAULT_MODEL } from "@/lib/models";
 import { debitCredits } from "@/lib/credits";
 import { searchMemories, addMemory, extractMemorableContent } from "@/lib/memory";
@@ -65,6 +65,8 @@ export async function POST(req: Request) {
     });
   }
 
+  const fullApiMessages = [systemMessage, ...messages];
+
   const openRouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -75,7 +77,7 @@ export async function POST(req: Request) {
     },
     body: JSON.stringify({
       model: selectedModelId,
-      messages: [systemMessage, ...messages],
+      messages: fullApiMessages,
       stream: true,
       max_tokens: model.maxTokens,
     }),
@@ -85,6 +87,11 @@ export async function POST(req: Request) {
     const errText = await openRouterRes.text();
     console.error("OpenRouter error:", errText);
     return new Response("AI service error", { status: 502 });
+  }
+
+  // Bug #9 fix: Guard against null body
+  if (!openRouterRes.body) {
+    return new Response("Empty response from AI service", { status: 502 });
   }
 
   const encoder = new TextEncoder();
@@ -131,8 +138,9 @@ export async function POST(req: Request) {
           }
         }
 
+        // Bug #3 fix: Include system message in fallback token estimate
         if (!inputTokens) {
-          const allText = messages.map((m: { content: string }) => m.content).join(" ");
+          const allText = fullApiMessages.map((m: { content: string }) => m.content).join(" ");
           inputTokens = Math.ceil(allText.length / 4);
         }
         if (!outputTokens) {
@@ -144,7 +152,7 @@ export async function POST(req: Request) {
           const success = await debitCredits(
             userId,
             cost,
-            `Chat: ${model.name} (${inputTokens}in/${outputTokens}out)`
+            `Chat: ${model.name} (${inputTokens} in / ${outputTokens} out)`
           );
           if (!success) {
             controller.enqueue(
@@ -162,6 +170,11 @@ export async function POST(req: Request) {
           outputTokens,
           cost,
         });
+
+        // Bug #10 fix: Update conversation timestamp so sidebar sorts correctly
+        await db.update(conversations)
+          .set({ updatedAt: sql`datetime('now')` })
+          .where(eq(conversations.id, convId));
 
         if (lastUserMsg) {
           const newMemories = extractMemorableContent(lastUserMsg.content);

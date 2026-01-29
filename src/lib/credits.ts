@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { users, creditLedger } from "./schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export async function debitCredits(
   userId: string,
@@ -9,15 +9,19 @@ export async function debitCredits(
 ): Promise<boolean> {
   if (amount <= 0) return true;
 
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!user || user.credits < amount) return false;
+  // Atomic: only debit if sufficient balance, prevents race conditions
+  const result = await db
+    .update(users)
+    .set({ credits: sql`credits - ${amount}` })
+    .where(sql`${users.id} = ${userId} AND ${users.credits} >= ${amount}`);
 
-  const newBalance = user.credits - amount;
-  await db.update(users).set({ credits: newBalance }).where(eq(users.id, userId));
+  if (result.changes === 0) return false;
+
+  const [user] = await db.select({ credits: users.credits }).from(users).where(eq(users.id, userId)).limit(1);
   await db.insert(creditLedger).values({
     userId,
     amount: -amount,
-    balance: newBalance,
+    balance: user?.credits ?? 0,
     description,
   });
   return true;
@@ -28,15 +32,18 @@ export async function creditAccount(
   amount: number,
   description: string
 ): Promise<void> {
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!user) throw new Error("User not found");
+  const result = await db
+    .update(users)
+    .set({ credits: sql`credits + ${amount}` })
+    .where(eq(users.id, userId));
 
-  const newBalance = user.credits + amount;
-  await db.update(users).set({ credits: newBalance }).where(eq(users.id, userId));
+  if (result.changes === 0) throw new Error("User not found");
+
+  const [user] = await db.select({ credits: users.credits }).from(users).where(eq(users.id, userId)).limit(1);
   await db.insert(creditLedger).values({
     userId,
     amount,
-    balance: newBalance,
+    balance: user?.credits ?? 0,
     description,
   });
 }

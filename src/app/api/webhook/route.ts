@@ -4,6 +4,44 @@ import { subscriptions } from "@/lib/schema";
 import { eq } from "drizzle-orm";
 import { creditAccount } from "@/lib/credits";
 import { PLANS } from "@/lib/models";
+import crypto from "crypto";
+
+function verifyStripeSignature(
+  payload: string,
+  sigHeader: string,
+  secret: string,
+  tolerance = 300
+): Record<string, unknown> {
+  const parts = sigHeader.split(",").reduce(
+    (acc, part) => {
+      const [key, val] = part.split("=");
+      if (key === "t") acc.timestamp = val;
+      if (key === "v1") acc.signatures.push(val);
+      return acc;
+    },
+    { timestamp: "", signatures: [] as string[] }
+  );
+
+  if (!parts.timestamp || parts.signatures.length === 0) {
+    throw new Error("Invalid signature header");
+  }
+
+  const signedPayload = `${parts.timestamp}.${payload}`;
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(signedPayload)
+    .digest("hex");
+
+  const valid = parts.signatures.some(
+    (sig) => crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
+  );
+  if (!valid) throw new Error("Signature mismatch");
+
+  const age = Math.floor(Date.now() / 1000) - parseInt(parts.timestamp);
+  if (age > tolerance) throw new Error("Timestamp too old");
+
+  return JSON.parse(payload);
+}
 
 export async function POST(req: Request) {
   const body = await req.text();
@@ -15,9 +53,10 @@ export async function POST(req: Request) {
 
   let event: Record<string, unknown>;
   try {
-    event = JSON.parse(body);
-  } catch {
-    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    event = verifyStripeSignature(body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err);
+    return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
   const type = event.type as string;
