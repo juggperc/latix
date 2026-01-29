@@ -34,6 +34,8 @@ next-env.d.ts
 # prisma
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 
 # memory vector db
 /memory-store/
